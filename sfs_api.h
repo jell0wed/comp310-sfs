@@ -31,5 +31,18 @@ typedef struct {
     inode* inodes;
 } inode_table;
 
+typedef struct {
+    char* filename;
+    char* extension;
+    int inode_index;
+} directory_entry;
+
+typedef struct {
+    int count;
+    directory_entry* entries;
+} directory;
+
+
+
 #endif /* SFS_API_H */
 

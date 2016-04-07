@@ -39,6 +39,51 @@ void write_inode_table() {
     free(inode_table_buff);
 }
 
+void read_inode_table() {
+    char* inode_table_buff = malloc(SFS_INODE_TABLE_SIZE * SFS_API_BLOCK_SIZE);
+    
+    read_blocks(1, SFS_INODE_TABLE_SIZE, inode_table_buff);
+    itbl->size = *((int*)inode_table_buff);
+    itbl->allocated_cnt = *((int*)(inode_table_buff + sizeof(int)));
+    memcpy(itbl->inodes, (void*)(inode_table_buff + 2*sizeof(int)), itbl->size * sizeof(inode));
+    
+    free(inode_table_buff);
+}
+
+void allocate_block(int start_block, int nblocks, char* buff) {
+    write_blocks(start_block, nblocks, buff);
+    
+    for(int i = start_block; i < (start_block + nblocks); i++) {
+        free_block_list[i] = 1;
+    }
+    
+    write_free_block_list();
+}
+
+int find_free_space(int desired_len, int* start_block, int* len) {
+    int num_blocks = (int)ceil((float)desired_len / (float)SFS_API_BLOCK_SIZE);
+    for(int i = 0; i < SFS_API_NUM_BLOCKS; i++) {
+        char i_isfree = free_block_list[i];
+        if(i_isfree == 0) {
+            char contiguous = 1;
+            int j = i;
+            while(contiguous && j < (i + num_blocks)) {
+                char j_isfree = free_block_list[j];
+                contiguous = j_isfree == 0 ? 1 : 0;
+                j++;
+            }
+            
+            if(contiguous) {
+                *start_block = i;
+                *len = num_blocks;
+                return 0;
+            }
+        }
+    }
+    
+    return -1;
+}
+
 void mksfs(int fresh) {
     if(fresh) {
         init_fresh_disk(SFS_API_FILENAME, SFS_API_BLOCK_SIZE, SFS_API_NUM_BLOCKS);
@@ -57,24 +102,33 @@ void mksfs(int fresh) {
         free(superblock_buff);
         
         int offset = 0;
-        free_block_list[offset] = 1; // space for superblock
+        free_block_list[offset] = (char)1; // space for superblock
         offset++;
         
         // allocate block for inode table
         for(int i = 0; i < SFS_INODE_TABLE_SIZE; i++) {
-            free_block_list[offset + i] = 1;
-            offset++;
+            free_block_list[offset + i] = (char)1;
         }
+        offset += SFS_INODE_TABLE_SIZE;
         
         // allocate n block to free space management (bitvector)
         int free_block_list_req_blocks = (int)ceil((float)SFS_API_NUM_BLOCKS / (float)SFS_API_BLOCK_SIZE);
         for(int i = 0; i < free_block_list_req_blocks; i++) {
-            free_block_list[(offset) + i] = 1;
-            offset++;
+            free_block_list[(offset) + i] = (char)1;
         }
+        offset += free_block_list_req_blocks;
         
         initialize_inode_table();
         write_free_block_list();
+        
+        
+        int start_block, nblocks;
+        find_free_space(sizeof(directory), &start_block, &nblocks);
+        
+        directory* rootdir_buff = malloc(sizeof(nblocks * SFS_API_BLOCK_SIZE));
+        rootdir_buff->count = 0;
+        allocate_block(start_block, nblocks, (char*)rootdir_buff);
+        free(rootdir_buff);
         
         inode root_inode;
         root_inode.mode = S_IFDIR | S_IRWXU | S_IRWXG | S_IRWXO;
@@ -89,18 +143,18 @@ void mksfs(int fresh) {
         // read superblock
         char* superblock_buff = malloc(SFS_API_BLOCK_SIZE);
         read_blocks(0, 1, superblock_buff);
-        sblock = superblock_buff;
+        sblock = malloc(sizeof(superblock));
+        memcpy(sblock, superblock_buff, sizeof(superblock));
+        free(superblock_buff);
         
         initialize_inode_table();
-        char* inode_table_buff = malloc(SFS_INODE_TABLE_SIZE * SFS_API_BLOCK_SIZE);
-        read_blocks(1, SFS_INODE_TABLE_SIZE, inode_table_buff);
-        itbl->size = *((int*)inode_table_buff);
-        itbl->allocated_cnt = *((int*)(inode_table_buff + sizeof(int)));
-        memcpy(itbl->inodes, (void*)(inode_table_buff + 2*sizeof(int)), itbl->size * sizeof(inode));
+        read_inode_table();
     }
     return;
 }
 
 int main() {
-    mksfs(0);
+    mksfs(1);
+    
+    //free stuff up!
 }
