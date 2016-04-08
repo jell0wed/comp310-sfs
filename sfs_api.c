@@ -437,10 +437,13 @@ void sfs_fwrite(int fdId, char* buf, int len) {
 }
 
 int main() {
-    mksfs(0);
+    mksfs(1);
     
     int fd = sfs_fopen("test");
-    sfs_fwrite(fd, "hello", 6);
+    sfs_fwrite(fd, "hello this is a test", 20);
+    
+    char* tt = malloc(1014);
+    sfs_fwrite(fd, tt, 1014);
     
     char test[1024];
     while(sfs_getnextfilename(&test) != 0) {
