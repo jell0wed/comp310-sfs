@@ -34,14 +34,14 @@ typedef struct {
 } inode_table;
 
 typedef struct {
+    int inode_index;
     char filename[16];
     char extension[3];
-    int inode_index;
 } directory_entry;
 
 typedef struct {
     int count;
-    directory_entry** entries;
+    directory_entry* entries;
 } directory;
 
 

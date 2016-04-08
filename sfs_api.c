@@ -122,8 +122,23 @@ void read_root_dir() {
     read_inode_table();
     inode* root_inode = &itbl->inodes[sblock->root_inode_no];
     
-    root_dir = malloc(root_inode->allocated_ptr * SFS_API_BLOCK_SIZE);
-    read_blocks(root_inode->ptrs[0], root_inode->allocated_ptr, (char*)root_dir);
+    char* root_dir_buff = malloc(root_inode->allocated_ptr * SFS_API_BLOCK_SIZE);
+    read_blocks(root_inode->ptrs[0], root_inode->allocated_ptr, (char*)root_dir_buff);
+    
+    int* countbuff = malloc(sizeof(int));
+    memcpy(countbuff, root_dir_buff, sizeof(int));
+    
+    root_dir = malloc(sizeof(directory));
+    root_dir->count = *countbuff;
+    root_dir->entries = (directory_entry*)calloc(root_dir->count, sizeof(directory_entry));
+    for(int i = 0; i < root_dir->count; i++) {
+        memcpy(&((root_dir->entries[i]).inode_index), root_dir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i, sizeof(int));
+        memcpy((root_dir->entries[i]).filename, root_dir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i + sizeof(int), 16);
+        memcpy((root_dir->entries[i]).extension, root_dir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i + sizeof(int) + 16, 3);
+    }
+    
+    free(countbuff);
+    free(root_dir_buff);
 }
 
 void insert_root_dir(directory_entry entry) {
@@ -145,17 +160,30 @@ void insert_root_dir(directory_entry entry) {
     
     read_root_dir();
     
-    int new_size = sizeof(directory) - sizeof(directory_entry*) + (root_dir->count + 1) * sizeof(directory_entry*);
-    directory* new_root = malloc(new_size);
-    directory_entry* dentry = malloc(sizeof(directory_entry));
+    directory* new_root = malloc(sizeof(directory));
+    new_root->count = root_dir->count + 1;
+    new_root->entries = (directory_entry*)calloc(new_root->count, sizeof(directory_entry));
+    for(int i = 0; i < root_dir->count; i++) {
+        memset((new_root->entries[i]).filename, '\0', sizeof((new_root->entries[i]).filename));
+        memset((new_root->entries[i]).extension, '\0', sizeof((new_root->entries[i]).extension));
+        
+        strcpy((new_root->entries[i]).filename, (root_dir->entries[i]).filename);
+        strcpy((new_root->entries[i]).extension, (root_dir->entries[i]).extension);
+        (new_root->entries[i]).inode_index = (root_dir->entries[i]).inode_index;
+    }
     
-    memcpy(dentry, &entry, sizeof(directory_entry));
-    memcpy(new_root, root_dir, sizeof(directory));
-    new_root->entries[root_dir->count] = dentry;
-    new_root->count++;
+    strcpy((new_root->entries[root_dir->count]).filename, entry.filename);
+    strcpy((new_root->entries[root_dir->count]).extension, entry.extension);
+    (new_root->entries[root_dir->count]).inode_index = entry.inode_index;
     
     char* rootdir_buff = malloc(total_dir_cap);
-    memcpy(rootdir_buff, new_root, new_size);
+    memcpy(rootdir_buff, new_root, sizeof(int));
+    for(int i = 0; i < new_root->count; i++) {
+        memcpy(rootdir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i, &((new_root->entries[i]).inode_index), sizeof(int));
+        memcpy(rootdir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i + sizeof(int), (new_root->entries[i]).filename, 16);
+        memcpy(rootdir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i + sizeof(int) + 16, (new_root->entries[i]).extension, 3);
+    }
+    //memcpy(rootdir_buff, new_root, sizeof(int) + new_root->count * sizeof(directory_entry));
     write_blocks((itbl->inodes[sblock->root_inode_no]).ptrs[0], (itbl->inodes[sblock->root_inode_no]).allocated_ptr, rootdir_buff);
     free(rootdir_buff);
     
@@ -265,7 +293,7 @@ int sfs_getnextfilename(char* fname) { // gets the name of the next file in dire
     if(next_pos >= root_dir->count) { return 0; }
     
     char buff[1024];
-    sprintf(buff, "%s.%s", root_dir->entries[next_pos]->filename, root_dir->entries[next_pos]->extension);
+    sprintf(buff, "%s.%s", (root_dir->entries[next_pos]).filename, (root_dir->entries[next_pos]).extension);
     strcpy(fname, buff);
     next_pos++;
 }
@@ -273,7 +301,7 @@ int sfs_getnextfilename(char* fname) { // gets the name of the next file in dire
 
 
 int main() {
-    mksfs(1);
+    mksfs(0);
     
     create_file("1234567898765432", "exe");
     
