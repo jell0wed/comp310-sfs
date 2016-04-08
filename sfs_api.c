@@ -144,10 +144,22 @@ void insert_root_dir(directory_entry entry) {
     }
     
     read_root_dir();
-    root_dir->entries[root_dir->count] = entry;
-    root_dir->count++;
     
-    write_blocks((itbl->inodes[sblock->root_inode_no]).ptrs[0], (itbl->inodes[sblock->root_inode_no]).allocated_ptr, root_dir);
+    int new_size = sizeof(directory) - sizeof(directory_entry*) + (root_dir->count + 1) * sizeof(directory_entry*);
+    directory* new_root = malloc(new_size);
+    directory_entry* dentry = malloc(sizeof(directory_entry));
+    
+    memcpy(dentry, &entry, sizeof(directory_entry));
+    memcpy(new_root, root_dir, sizeof(directory));
+    new_root->entries[root_dir->count] = dentry;
+    new_root->count++;
+    
+    char* rootdir_buff = malloc(total_dir_cap);
+    memcpy(rootdir_buff, new_root, new_size);
+    write_blocks((itbl->inodes[sblock->root_inode_no]).ptrs[0], (itbl->inodes[sblock->root_inode_no]).allocated_ptr, rootdir_buff);
+    free(rootdir_buff);
+    
+    read_root_dir();
 }
 
 void mksfs(int fresh) {
@@ -244,7 +256,6 @@ int create_file(char* filename, char* ext) {
     
     read_root_dir();
     insert_root_dir(entry);
-    save_root_dir();
 }
 
 int next_pos = 0;
@@ -254,15 +265,22 @@ int sfs_getnextfilename(char* fname) { // gets the name of the next file in dire
     if(next_pos >= root_dir->count) { return 0; }
     
     char buff[1024];
-    sprintf(buff, "%s.%s", (root_dir->entries[next_pos]).filename, (root_dir->entries[next_pos]).extension);
-    strcpy(fname, &buff);
+    sprintf(buff, "%s.%s", root_dir->entries[next_pos]->filename, root_dir->entries[next_pos]->extension);
+    strcpy(fname, buff);
     next_pos++;
 }
 
 
 
 int main() {
-    mksfs(0);
+    mksfs(1);
+    
+    create_file("1234567898765432", "exe");
+    
+    char test[1000];
+    sfs_getnextfilename(&test);
+    
+    printf(test);
     
     return 0;
 }

@@ -41,7 +41,7 @@ typedef struct {
 
 typedef struct {
     int count;
-    directory_entry* entries;
+    directory_entry** entries;
 } directory;
 
 
