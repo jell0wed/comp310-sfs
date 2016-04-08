@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <string.h>
 #include "sfs_api.h"
 #include "disk_emu.h"
 
@@ -9,14 +10,20 @@ const int max_inodes = floor((float)(SFS_INODE_TABLE_SIZE * SFS_API_BLOCK_SIZE) 
     
 superblock* sblock;
 inode_table* itbl;
+directory* root_dir;
 char free_block_list[SFS_API_NUM_BLOCKS];
 
 void initialize_inode_table() {
     itbl = malloc(sizeof(inode_table) - 1 + max_inodes * sizeof(inode));
     
+    itbl->free_inodes = malloc(max_inodes * sizeof(char));
     itbl->inodes = malloc(max_inodes * sizeof(inode));
     itbl->allocated_cnt = 0;
     itbl->size = max_inodes;
+    
+    for(int i = 0; i < max_inodes; i++) {
+        itbl->free_inodes[i] = 0;
+    }
 }
 
 void write_free_block_list() {
@@ -31,8 +38,9 @@ void write_inode_table() {
     char* inode_table_buff = malloc(SFS_INODE_TABLE_SIZE * SFS_API_BLOCK_SIZE);
     memcpy(inode_table_buff, (int*)&(itbl->size), sizeof(int));
     memcpy(inode_table_buff + sizeof(int), (int*)&(itbl->allocated_cnt), sizeof(int));
+    memcpy(inode_table_buff + 2*sizeof(int), (char*)(itbl->free_inodes), max_inodes * sizeof(char));
     for(int i = 0; i < itbl->allocated_cnt; i++) {
-        memcpy(inode_table_buff + sizeof(int) * 2 + i * sizeof(inode), (inode*)&(itbl->inodes[i]), sizeof(inode));
+        memcpy(inode_table_buff + sizeof(int) * 2 + max_inodes * sizeof(char) + i * sizeof(inode), (inode*)&(itbl->inodes[i]), sizeof(inode));
     }
     
     write_blocks(1, SFS_INODE_TABLE_SIZE, inode_table_buff);
@@ -45,7 +53,8 @@ void read_inode_table() {
     read_blocks(1, SFS_INODE_TABLE_SIZE, inode_table_buff);
     itbl->size = *((int*)inode_table_buff);
     itbl->allocated_cnt = *((int*)(inode_table_buff + sizeof(int)));
-    memcpy(itbl->inodes, (void*)(inode_table_buff + 2*sizeof(int)), itbl->size * sizeof(inode));
+    memcpy(itbl->free_inodes, (void*)(inode_table_buff + 2*sizeof(int)), max_inodes * sizeof(char));
+    memcpy(itbl->inodes, (void*)(inode_table_buff + 2*sizeof(int) + max_inodes * sizeof(char)), itbl->size * sizeof(inode));
     
     free(inode_table_buff);
 }
@@ -58,6 +67,22 @@ void allocate_block(int start_block, int nblocks, char* buff) {
     }
     
     write_free_block_list();
+}
+
+void deallocate_block(int start_block, int nblock) {
+    for(int i = start_block; i < (start_block + nblock); i++) {
+        free_block_list[i] = 0;
+    }
+    
+    write_free_block_list();
+}
+
+void save_inode(inode* inode, int index) {
+    itbl->inodes[index] = *inode;
+    itbl->allocated_cnt++;
+    itbl->free_inodes[index] = 1;
+    
+    write_inode_table();
 }
 
 int find_free_space(int desired_len, int* start_block, int* len) {
@@ -84,9 +109,55 @@ int find_free_space(int desired_len, int* start_block, int* len) {
     return -1;
 }
 
+int find_next_available_inode_index(int* inode_index) {
+    for(int i = 0; i < max_inodes; i++) {
+        if(itbl->free_inodes[i] == 0) { *inode_index = i; return 1; }
+    }
+    
+    return 0;
+}
+
+void read_root_dir() {
+    if(root_dir != 0) { free(root_dir); }
+    read_inode_table();
+    inode* root_inode = &itbl->inodes[sblock->root_inode_no];
+    
+    root_dir = malloc(root_inode->allocated_ptr * SFS_API_BLOCK_SIZE);
+    read_blocks(root_inode->ptrs[0], root_inode->allocated_ptr, (char*)root_dir);
+}
+
+void insert_root_dir(directory_entry entry) {
+    int total_dir_size = sizeof(directory) - 1 + root_dir->count * sizeof(directory_entry);
+    int total_dir_cap = (&itbl->inodes[sblock->root_inode_no])->allocated_ptr * SFS_API_BLOCK_SIZE;
+    if((total_dir_size + sizeof(directory_entry)) > total_dir_cap) {
+        // reallocate a new set of block for the root directory and update inode
+        int start_index, block_len;
+        find_free_space(total_dir_size + sizeof(directory_entry), &start_index, &block_len);
+        
+        allocate_block(start_index, block_len, root_dir);
+        (itbl->inodes[sblock->root_inode_no]).allocated_ptr = block_len;
+        for(int i = 0; i < block_len; i++) {
+            (itbl->inodes[sblock->root_inode_no]).ptrs[i] = start_index + i;
+        }
+        deallocate_block((itbl->inodes[sblock->root_inode_no]).ptrs[0], (itbl->inodes[sblock->root_inode_no]).allocated_ptr);
+        write_inode_table();
+    }
+    
+    read_root_dir();
+    root_dir->entries[root_dir->count] = entry;
+    root_dir->count++;
+    
+    write_blocks((itbl->inodes[sblock->root_inode_no]).ptrs[0], (itbl->inodes[sblock->root_inode_no]).allocated_ptr, root_dir);
+}
+
 void mksfs(int fresh) {
     if(fresh) {
         init_fresh_disk(SFS_API_FILENAME, SFS_API_BLOCK_SIZE, SFS_API_NUM_BLOCKS);
+        
+        initialize_inode_table();
+        
+        int root_inode_index;
+        find_next_available_inode_index(&root_inode_index);
         
         // create the super block
         char* superblock_buff = malloc(SFS_API_BLOCK_SIZE);
@@ -95,7 +166,7 @@ void mksfs(int fresh) {
         sblock->block_size = SFS_API_BLOCK_SIZE;
         sblock->fs_size = SFS_API_NUM_BLOCKS;
         sblock->inode_table_len = SFS_INODE_TABLE_SIZE;
-        sblock->root_inode_no = 0;
+        sblock->root_inode_no = root_inode_index;
         
         memcpy(superblock_buff, (void*)sblock, sizeof(superblock));    // magic
         write_blocks(0, 1, superblock_buff);
@@ -118,7 +189,6 @@ void mksfs(int fresh) {
         }
         offset += free_block_list_req_blocks;
         
-        initialize_inode_table();
         write_free_block_list();
         
         
@@ -133,10 +203,12 @@ void mksfs(int fresh) {
         inode root_inode;
         root_inode.mode = S_IFDIR | S_IRWXU | S_IRWXG | S_IRWXO;
         root_inode.size = 1;
+        root_inode.ptrs[0] = start_block;
+        root_inode.allocated_ptr = 1;
         
-        itbl->inodes[0] = root_inode;
-        itbl->allocated_cnt++;
-        write_inode_table();
+        save_inode(&root_inode, root_inode_index);
+        
+        read_root_dir();
     } else {
         init_disk(SFS_API_FILENAME, SFS_API_BLOCK_SIZE, SFS_API_NUM_BLOCKS);
         
@@ -149,12 +221,48 @@ void mksfs(int fresh) {
         
         initialize_inode_table();
         read_inode_table();
+        read_root_dir();
     }
     return;
 }
 
-int main() {
-    mksfs(1);
+int create_file(char* filename, char* ext) {
+    inode file_inode;
+    file_inode.mode = S_IRWXU | S_IRWXG | S_IRWXO;
+    file_inode.size = 0;
+    file_inode.allocated_ptr = 0;
     
-    //free stuff up!
+    int inode_index;
+    find_next_available_inode_index(&inode_index);
+    
+    save_inode(&file_inode, inode_index);
+    
+    directory_entry entry;
+    entry.inode_index = inode_index;
+    strcpy(entry.filename, filename);
+    strcpy(entry.extension, ext);
+    
+    read_root_dir();
+    insert_root_dir(entry);
+    save_root_dir();
+}
+
+int next_pos = 0;
+int sfs_getnextfilename(char* fname) { // gets the name of the next file in directory
+    read_root_dir();
+    
+    if(next_pos >= root_dir->count) { return 0; }
+    
+    char buff[1024];
+    sprintf(buff, "%s.%s", (root_dir->entries[next_pos]).filename, (root_dir->entries[next_pos]).extension);
+    strcpy(fname, &buff);
+    next_pos++;
+}
+
+
+
+int main() {
+    mksfs(0);
+    
+    return 0;
 }

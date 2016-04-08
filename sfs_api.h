@@ -22,18 +22,20 @@ typedef struct {
 typedef struct {
     mode_t mode;
     int size;
-    int* ptrs[12];
+    int allocated_ptr;
+    int ptrs[12];
 } inode;
 
 typedef struct {
     int size;
     int allocated_cnt;
+    char* free_inodes;
     inode* inodes;
 } inode_table;
 
 typedef struct {
-    char* filename;
-    char* extension;
+    char filename[16];
+    char extension[3];
     int inode_index;
 } directory_entry;
 
