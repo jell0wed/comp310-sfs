@@ -11,6 +11,7 @@ const int max_inodes = floor((float)(SFS_INODE_TABLE_SIZE * SFS_API_BLOCK_SIZE) 
 superblock* sblock;
 inode_table* itbl;
 directory* root_dir;
+file_descriptor_table* fdtbl;
 char free_block_list[SFS_API_NUM_BLOCKS];
 
 void initialize_inode_table() {
@@ -23,6 +24,15 @@ void initialize_inode_table() {
     
     for(int i = 0; i < max_inodes; i++) {
         itbl->free_inodes[i] = 0;
+    }
+}
+
+void initialize_file_descriptor_table() {
+    fdtbl = malloc(sizeof(file_descriptor_table));
+    
+    fdtbl->size = 1024;
+    for(int i = 0; i < fdtbl->size; i++) {
+        (fdtbl->entries[i]).in_use = 0;
     }
 }
 
@@ -116,6 +126,15 @@ int find_next_available_inode_index(int* inode_index) {
     
     return 0;
 }
+
+int find_next_avail_fd_entry(int* fd_index) {
+    for(int i = 0; i < fdtbl->size; i++) {
+        if((fdtbl->entries[i]).in_use == 0) { *fd_index = i; return 1; }
+    }
+    
+    return 0;
+}
+
 
 void read_root_dir() {
     if(root_dir != 0) { free(root_dir); }
@@ -263,10 +282,31 @@ void mksfs(int fresh) {
         read_inode_table();
         read_root_dir();
     }
+    
+    initialize_file_descriptor_table();
     return;
 }
 
-int create_file(char* filename, char* ext) {
+directory_entry* get_file(char* filename) {
+    read_root_dir();
+    
+    directory_entry* entry = 0;
+    int directory_index = 0;
+    while(entry == 0 && directory_index < root_dir->count) {
+        char* namebuff = strdup((root_dir->entries[directory_index]).filename);
+        int cmp = strcmp(filename, namebuff);
+        if(cmp == 0) {
+            entry = &root_dir->entries[directory_index];
+        }
+        
+        free(namebuff);
+        directory_index++;
+    }
+    
+    return entry;
+}
+
+directory_entry* create_file(char* filename, char* ext) {
     inode file_inode;
     file_inode.mode = S_IRWXU | S_IRWXG | S_IRWXO;
     file_inode.size = 0;
@@ -284,31 +324,71 @@ int create_file(char* filename, char* ext) {
     
     read_root_dir();
     insert_root_dir(entry);
+    
+    return get_file(filename);
 }
 
+
 int next_pos = 0;
-int sfs_getnextfilename(char* fname) { // gets the name of the next file in directory
+int sfs_getnextfilename(char* fname) { // get the name of the next file in directory
     read_root_dir();
     
     if(next_pos >= root_dir->count) { return 0; }
     
     char buff[1024];
-    sprintf(buff, "%s.%s", (root_dir->entries[next_pos]).filename, (root_dir->entries[next_pos]).extension);
+    sprintf(buff, "%s", (root_dir->entries[next_pos]).filename);
     strcpy(fname, buff);
     next_pos++;
 }
 
+int sfs_getfilesize(const char* path) { // get the size of a given file
+    read_root_dir();
+    
+    directory_entry* entry = 0;
+    int directory_index = 0;
+    while(entry == 0 && directory_index < root_dir->count) {
+        char* namebuff = strdup((root_dir->entries[directory_index]).filename);
+        int cmp = strcmp(path, namebuff);
+        if(cmp == 0) {
+            entry = &root_dir->entries[directory_index];
+        }
+        
+        free(namebuff);
+        directory_index++;
+    }
+    
+    if(entry == 0) { return -1; }
+    
+    return (itbl->inodes[entry->inode_index]).size;
+}
 
+int sfs_fopen(char* name) {
+    directory_entry* file = get_file(name);
+    if(!file) {
+        file = create_file(name, "");
+    }
+    
+    // create file descriptor entry
+    int fd_index;
+    if(!find_next_avail_fd_entry(&fd_index)) {
+        // TODO : handle error -- no more file descriptor
+    }
+    
+    (fdtbl->entries[fd_index]).in_use = 1;
+    (fdtbl->entries[fd_index]).inode_index = file->inode_index;
+    (fdtbl->entries[fd_index]).rw_ptr = (itbl->inodes[file->inode_index]).size;
+    
+    return fd_index;
+}
 
 int main() {
     mksfs(0);
     
-    create_file("1234567898765432", "exe");
-    
-    char test[1000];
-    sfs_getnextfilename(&test);
-    
-    printf(test);
+    char name[1024];
+    while(sfs_getnextfilename(&name) != 0) {
+        int size = sfs_getfilesize(name);
+        printf("%s : size = %d\n", name, size);
+    }
     
     return 0;
 }

@@ -44,6 +44,17 @@ typedef struct {
     directory_entry* entries;
 } directory;
 
+typedef struct {
+    int in_use;
+    int inode_index;
+    int rw_ptr;
+} file_descriptor_entry;
+
+typedef struct {
+    int size;
+    file_descriptor_entry entries[1024];
+} file_descriptor_table;
+
 
 
 #endif /* SFS_API_H */
