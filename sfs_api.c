@@ -381,13 +381,71 @@ int sfs_fopen(char* name) {
     return fd_index;
 }
 
+void sfs_fclose(int fdId) {
+    if(fdId >= fdtbl->size) { return -1; }
+    if((fdtbl->entries[fdId]).in_use == 0) { return -1; }
+    
+    (fdtbl->entries[fdId]).in_use = 0;
+    return;
+}
+
+void sfs_fwrite(int fdId, char* buf, int len) {
+    if(fdId >= fdtbl->size) { return -1; }
+    if((fdtbl->entries[fdId]).in_use == 0) { return -1; }
+    
+    file_descriptor_entry* entry = &(fdtbl->entries[fdId]);
+    
+    if((itbl->inodes[entry->inode_index]).allocated_ptr > 0) {
+        int start_block = (itbl->inodes[entry->inode_index]).ptrs[(int)floor((float)(fdtbl->entries[fdId]).rw_ptr / (float)SFS_API_BLOCK_SIZE)];
+        int last_index = (fdtbl->entries[fdId]).rw_ptr % SFS_API_BLOCK_SIZE;
+        int fill_len = last_index + len > SFS_API_BLOCK_SIZE ? (SFS_API_BLOCK_SIZE - last_index) : len;
+
+        // fill in last block
+        char* block_buff = malloc(SFS_API_BLOCK_SIZE);
+        read_blocks(start_block, 1, block_buff);
+        memcpy(block_buff + last_index, buf, fill_len);
+        // write last block
+        write_blocks(start_block, 1, block_buff);
+        free(block_buff);
+        
+        buf += fill_len;
+        len -= fill_len;
+        entry->rw_ptr += fill_len;
+        
+        (itbl->inodes[entry->inode_index]).size += fill_len;
+    }
+    
+    int block_start, block_len;
+    if(!find_free_space(len, &block_start, &block_len)) {
+        // TODO : handle error
+    }
+    
+    if(len > 0) {
+        char* new_blocks_buff = malloc(block_len * SFS_API_BLOCK_SIZE);
+        memcpy(new_blocks_buff, buf, len);
+        allocate_block(block_start, block_len, new_blocks_buff);
+        for(int i = 0; i < block_len; i++) {
+            (itbl->inodes[entry->inode_index]).ptrs[(itbl->inodes[entry->inode_index]).allocated_ptr + i] = block_start + i;
+            (itbl->inodes[entry->inode_index]).allocated_ptr++;
+        }
+
+        (itbl->inodes[entry->inode_index]).size += len;
+        entry->rw_ptr += len;
+    }
+    
+    write_inode_table();
+}
+
 int main() {
     mksfs(0);
     
-    char name[1024];
-    while(sfs_getnextfilename(&name) != 0) {
-        int size = sfs_getfilesize(name);
-        printf("%s : size = %d\n", name, size);
+    int fd = sfs_fopen("test");
+    sfs_fwrite(fd, "hello", 6);
+    
+    char test[1024];
+    while(sfs_getnextfilename(&test) != 0) {
+        int size = sfs_getfilesize(test);
+        printf("%s : size = %d\n", test, size);
     }
     
     return 0;
