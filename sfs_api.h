@@ -8,6 +8,7 @@
 #define SFS_API_NUM_BLOCKS  1024
 #define SFS_MAGIC_NUMBER    0xACBD0005
 #define SFS_INODE_TABLE_SIZE    3
+#define SFS_NUM_DIRECT_PTR  12
 
 void mksfs(int fresh);  // creates the file system
 
@@ -23,7 +24,8 @@ typedef struct {
     mode_t mode;
     int size;
     int allocated_ptr;
-    int ptrs[12];
+    int ind_block_ptr;
+    int ptrs[SFS_NUM_DIRECT_PTR];
 } inode;
 
 typedef struct {
@@ -32,6 +34,11 @@ typedef struct {
     char* free_inodes;
     inode* inodes;
 } inode_table;
+
+typedef struct {
+    int count;
+    int* ptrs;
+} indirection_block;
 
 typedef struct {
     int inode_index;
