@@ -12,7 +12,7 @@ superblock* sblock;
 inode_table* itbl;
 directory* root_dir;
 file_descriptor_table* fdtbl;
-char free_block_list[SFS_API_NUM_BLOCKS];
+char* free_block_list;
 
 void initialize_inode_table() {
     itbl = malloc(sizeof(inode_table) - 1 + max_inodes * sizeof(inode));
@@ -37,10 +37,17 @@ void initialize_file_descriptor_table() {
 }
 
 void write_free_block_list() {
+    char* free_block_buff = strdup(free_block_list);
+    //memcpy(free_block_buff, free_block_list, SFS_API_BLOCK_SIZE);
+    write_blocks(1 + SFS_INODE_TABLE_SIZE, free_block_list_req_blocks, &(free_block_list[0]));
+    free(free_block_buff);
+}
+
+void read_free_block_list() {
     char* free_block_buff = malloc(free_block_list_req_blocks * SFS_API_BLOCK_SIZE);
+    read_blocks(1 + SFS_INODE_TABLE_SIZE, free_block_list_req_blocks, free_block_buff);
+    memcpy(free_block_list, free_block_buff, SFS_API_BLOCK_SIZE);
     
-    memcpy(free_block_buff, free_block_list, SFS_API_NUM_BLOCKS);
-    write_blocks(1 + SFS_INODE_TABLE_SIZE - 1, free_block_list_req_blocks, free_block_buff);
     free(free_block_buff);
 }
 
@@ -116,6 +123,8 @@ int find_free_space(int desired_len, int* start_block, int* len) {
         }
     }
     
+    *start_block = -1;
+    *len = -1;
     return -1;
 }
 
@@ -210,6 +219,7 @@ void insert_root_dir(directory_entry entry) {
 }
 
 void mksfs(int fresh) {
+    free_block_list = calloc(SFS_API_BLOCK_SIZE, sizeof(char));
     if(fresh) {
         init_fresh_disk(SFS_API_FILENAME, SFS_API_BLOCK_SIZE, SFS_API_NUM_BLOCKS);
         
@@ -250,7 +260,6 @@ void mksfs(int fresh) {
         
         write_free_block_list();
         
-        
         int start_block, nblocks;
         find_free_space(sizeof(directory), &start_block, &nblocks);
         
@@ -279,6 +288,7 @@ void mksfs(int fresh) {
         free(superblock_buff);
         
         initialize_inode_table();
+        read_free_block_list();
         read_inode_table();
         read_root_dir();
     }
@@ -396,23 +406,31 @@ void sfs_fwrite(int fdId, char* buf, int len) {
     file_descriptor_entry* entry = &(fdtbl->entries[fdId]);
     
     if((itbl->inodes[entry->inode_index]).allocated_ptr > 0) {
-        int start_block = (itbl->inodes[entry->inode_index]).ptrs[(int)floor((float)(fdtbl->entries[fdId]).rw_ptr / (float)SFS_API_BLOCK_SIZE)];
+        int start_inode_ptr_idx = (int)floor((float)((fdtbl->entries[fdId]).rw_ptr) / (float)SFS_API_BLOCK_SIZE);
+        if(start_inode_ptr_idx >= 12) {
+            printf("you have to use indirect pointers (not implemented yet)");
+            return;
+        }
+        int start_block = (itbl->inodes[entry->inode_index]).ptrs[start_inode_ptr_idx - 1];
         int last_index = (fdtbl->entries[fdId]).rw_ptr % SFS_API_BLOCK_SIZE;
-        int fill_len = last_index + len > SFS_API_BLOCK_SIZE ? (SFS_API_BLOCK_SIZE - last_index) : len;
+        
+        if(last_index > 0) {
+            int fill_len = last_index + len > SFS_API_BLOCK_SIZE ? (SFS_API_BLOCK_SIZE - last_index) : len;
 
-        // fill in last block
-        char* block_buff = malloc(SFS_API_BLOCK_SIZE);
-        read_blocks(start_block, 1, block_buff);
-        memcpy(block_buff + last_index, buf, fill_len);
-        // write last block
-        write_blocks(start_block, 1, block_buff);
-        free(block_buff);
-        
-        buf += fill_len;
-        len -= fill_len;
-        entry->rw_ptr += fill_len;
-        
-        (itbl->inodes[entry->inode_index]).size += fill_len;
+            // fill in last block
+            char* block_buff = malloc(SFS_API_BLOCK_SIZE);
+            read_blocks(start_block, 1, block_buff);
+            memcpy(block_buff + last_index, buf, fill_len);
+            // write last block
+            write_blocks(start_block, 1, block_buff);
+            free(block_buff);
+
+            buf += fill_len;
+            len -= fill_len;
+            entry->rw_ptr += fill_len;
+
+            (itbl->inodes[entry->inode_index]).size += fill_len;
+        }
     }
     
     int block_start, block_len;
@@ -425,7 +443,7 @@ void sfs_fwrite(int fdId, char* buf, int len) {
         memcpy(new_blocks_buff, buf, len);
         allocate_block(block_start, block_len, new_blocks_buff);
         for(int i = 0; i < block_len; i++) {
-            (itbl->inodes[entry->inode_index]).ptrs[(itbl->inodes[entry->inode_index]).allocated_ptr + i] = block_start + i;
+            (itbl->inodes[entry->inode_index]).ptrs[(itbl->inodes[entry->inode_index]).allocated_ptr] = block_start + i;
             (itbl->inodes[entry->inode_index]).allocated_ptr++;
         }
 
@@ -436,20 +454,63 @@ void sfs_fwrite(int fdId, char* buf, int len) {
     write_inode_table();
 }
 
+void sfs_fseek(int fdId, int loc) {
+    if(fdId >= fdtbl->size) { return -1; }
+    if((fdtbl->entries[fdId]).in_use == 0) { return -1; }
+    
+    file_descriptor_entry* entry = &(fdtbl->entries[fdId]);
+    
+    entry->rw_ptr = loc;
+}
+
+void sfs_fread(int fdId, char* buf, int len) {
+    if(fdId >= fdtbl->size) { return -1; }
+    if((fdtbl->entries[fdId]).in_use == 0) { return -1; }
+    
+    file_descriptor_entry* entry = &(fdtbl->entries[fdId]);
+    
+    int read_len = (itbl->inodes[entry->inode_index]).size - entry->rw_ptr;
+    if(read_len < 0) {
+        printf("filesize limit reached");
+        return;
+    }
+    
+    int rel_start_block_index = (int)floor((float)entry->rw_ptr / (float)SFS_API_BLOCK_SIZE);
+    int start_index = entry->rw_ptr % SFS_API_BLOCK_SIZE;
+    int read = 0;
+    while(read_len > 0) {
+        int block_read_index = (itbl->inodes[entry->inode_index]).ptrs[rel_start_block_index];
+        int to_read_len = read_len > SFS_API_BLOCK_SIZE ? SFS_API_BLOCK_SIZE - start_index : read_len;
+        
+        char* block_buff = malloc(SFS_API_BLOCK_SIZE);
+        read_blocks(block_read_index, 1, block_buff);
+        memcpy(buf + read, block_buff + start_index, to_read_len);
+        free(block_buff);
+        
+        read += to_read_len;
+        entry->rw_ptr += to_read_len;
+        read_len -= to_read_len;
+        start_index = 0;
+        rel_start_block_index = (int)floor((float)entry->rw_ptr / (float)SFS_API_BLOCK_SIZE);
+    }
+}
+
 int main() {
     mksfs(1);
-    
-    int fd = sfs_fopen("test");
-    sfs_fwrite(fd, "hello this is a test", 20);
-    
-    char* tt = malloc(1014);
-    sfs_fwrite(fd, tt, 1014);
-    
-    char test[1024];
-    while(sfs_getnextfilename(&test) != 0) {
-        int size = sfs_getfilesize(test);
-        printf("%s : size = %d\n", test, size);
+    int first_created = get_file("test1mb") == 0;
+    int fd = sfs_fopen("test1mb");
+    if(first_created) {
+        char* tt = "1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz";
+        sfs_fwrite(fd, tt, 1116);
     }
+    
+    char testbuff[1107];
+    sfs_fseek(fd, 10);
+    sfs_fread(fd, testbuff, 1107);
+    
+    printf("%s", testbuff);
+    
+    sfs_fclose(fd);
     
     return 0;
 }

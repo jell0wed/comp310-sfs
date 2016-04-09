@@ -116,7 +116,7 @@ int read_blocks(int start_address, int nblocks, void *buffer)
     for (i = 0; i < nblocks; ++i)
     {
         /*Pause until the latency duration is elapsed*/
-        // usleep(L);
+        usleep(L);
 
         s++;
         fread(blockRead, BLOCK_SIZE, 1, fp);
