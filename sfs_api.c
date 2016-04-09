@@ -400,12 +400,12 @@ int sfs_fopen(char* name) {
     return fd_index;
 }
 
-void sfs_fclose(int fdId) {
+int sfs_fclose(int fdId) {
     if(fdId >= fdtbl->size) { return -1; }
     if((fdtbl->entries[fdId]).in_use == 0) { return -1; }
     
     (fdtbl->entries[fdId]).in_use = 0;
-    return;
+    return 0;
 }
 
 int sfs_fwrite(int fdId, char* buf, int len) {
