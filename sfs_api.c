@@ -532,7 +532,7 @@ void sfs_fread(int fdId, char* buf, int len) {
     
     file_descriptor_entry* entry = &(fdtbl->entries[fdId]);
     
-    int read_len = (itbl->inodes[entry->inode_index]).size - entry->rw_ptr;
+    int read_len = len;
     if(read_len < 0) {
         printf("filesize limit reached");
         return;
@@ -541,8 +541,27 @@ void sfs_fread(int fdId, char* buf, int len) {
     int rel_start_block_index = (int)floor((float)entry->rw_ptr / (float)SFS_API_BLOCK_SIZE);
     int start_index = entry->rw_ptr % SFS_API_BLOCK_SIZE;
     int read = 0;
+    indirection_block* ind_block = 0;
     while(read_len > 0) {
-        int block_read_index = (itbl->inodes[entry->inode_index]).ptrs[rel_start_block_index];
+        int block_read_index = 0;
+        if(rel_start_block_index >= SFS_NUM_DIRECT_PTR) {
+            if(ind_block == 0) {
+                char* ind_block_buff = malloc(SFS_API_BLOCK_SIZE);
+                read_blocks((itbl->inodes[entry->inode_index]).ind_block_ptr, 1, ind_block_buff);
+                
+                ind_block = malloc(SFS_API_BLOCK_SIZE);
+                ind_block->ptrs = calloc(ind_block->count, sizeof(int));
+                
+                memcpy(&(ind_block->count), ind_block_buff, sizeof(int));
+                memcpy(ind_block->ptrs, ind_block_buff + sizeof(int), ind_block->count * sizeof(int));
+                free(ind_block_buff);
+            }
+            
+            block_read_index = ind_block->ptrs[rel_start_block_index - SFS_NUM_DIRECT_PTR];
+        } else {
+            block_read_index = (itbl->inodes[entry->inode_index]).ptrs[rel_start_block_index];
+        }
+        
         int to_read_len = read_len > SFS_API_BLOCK_SIZE ? SFS_API_BLOCK_SIZE - start_index : read_len;
         
         char* block_buff = malloc(SFS_API_BLOCK_SIZE);
@@ -555,6 +574,10 @@ void sfs_fread(int fdId, char* buf, int len) {
         read_len -= to_read_len;
         start_index = 0;
         rel_start_block_index = (int)floor((float)entry->rw_ptr / (float)SFS_API_BLOCK_SIZE);
+    }
+    
+    if(ind_block != 0) {
+        free(ind_block);
     }
 }
 
