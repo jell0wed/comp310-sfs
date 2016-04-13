@@ -12,20 +12,20 @@
  * upper-case letters and periods ('.') characters. Feel free to
  * change this if your implementation differs.
  */
-#define MAX_FNAME_LENGTH 20   /* Assume at most 20 characters (16.3) */
+#define MAX_FNAME_LENGTH 13   /* Assume at most 20 characters (16.3) */
 
 /* The maximum number of files to attempt to open or create.  NOTE: we
  * do not _require_ that you support this many files. This is just to
  * test the behavior of your code.
  */
-#define MAX_FD 100 
+#define MAX_FD 10 
 
 /* The maximum number of bytes we'll try to write to a file. If you
  * support much shorter or larger files for some reason, feel free to
  * reduce this value.
  */
-#define MAX_BYTES 30000 /* Maximum file size I'll try to create */
-#define MIN_BYTES 10000         /* Minimum file size */
+#define MAX_BYTES 3000 /* Maximum file size I'll try to create */
+#define MIN_BYTES 1000         /* Minimum file size */
 
 /* Just a random test string.
  */
@@ -116,7 +116,7 @@ main(int argc, char **argv)
     }
     filesize[i] = (rand() % (MAX_BYTES-MIN_BYTES)) + MIN_BYTES;
   }
-  sfs_remove(names[0]);
+
   for (i = 0; i < 2; i++) {
     for (j = i + 1; j < 2; j++) {
       if (fds[i] == fds[j]) {
@@ -151,7 +151,7 @@ main(int argc, char **argv)
       }
       free(buffer);
     }
-    int tmp = sfs_GetFileSize(names[i]);
+    int tmp = sfs_getfilesize(names[i]);
     if (filesize[i] != tmp) {
       fprintf(stderr, "ERROR: mismatch file size %d, %d\n", filesize[i], tmp);
       error_count++;
@@ -181,8 +181,8 @@ main(int argc, char **argv)
 
   fds[1] = sfs_fopen(names[1]);
   
-  sfs_fseek(0, 0);
-  sfs_fseek(1, 0);
+  sfs_fseek(fds[0], 0);
+  sfs_fseek(fds[1], 0);
   
   for (i = 0; i < 2; i++) {
     for (j = 0; j < filesize[i]; j += chunksize) {
@@ -376,9 +376,9 @@ main(int argc, char **argv)
   }
 
   printf("Directory listing\n");
-  char *filename = (char *)malloc(MAXFILENAME);
+  char *filename = (char *)malloc(MAX_FNAME_LENGTH);
   int max = 0;
-  while (sfs_get_next_filename(filename)) {
+  while (sfs_getnextfilename(filename)) {
 	  if (strcmp(filename, names[max]) != 0) {
 	  	printf("ERROR misnamed file %d: %s %s\n", max, filename, names[max]);
 		error_count++;
@@ -419,7 +419,7 @@ main(int argc, char **argv)
 	  sfs_remove(names[i]);
   }
 
-  if (sfs_get_next_filename(filename)) {
+  if (sfs_getnextfilename(filename)) {
 	  fprintf(stderr, "ERROR: should be empty dir\n");
 	  error_count++;
   }

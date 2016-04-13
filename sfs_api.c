@@ -388,6 +388,8 @@ int sfs_getfilesize(const char* path) { // get the size of a given file
 }
 
 int sfs_fopen(char* name) {
+    if(strlen(name) > SFS_MAX_FILENAME) { return -1; }
+    
     directory_entry* file = get_file(name);
     if(!file) {
         file = create_file(name, "");

@@ -9,6 +9,7 @@
 #define SFS_MAGIC_NUMBER    0xACBD0005
 #define SFS_INODE_TABLE_SIZE    20
 #define SFS_NUM_DIRECT_PTR  12
+#define SFS_MAX_FILENAME    13
 
 void mksfs(int fresh);  // creates the file system
 
@@ -42,7 +43,7 @@ typedef struct {
 
 typedef struct {
     int inode_index;
-    char filename[16];
+    char filename[SFS_MAX_FILENAME];
     char extension[3];
 } directory_entry;
 
