@@ -354,16 +354,19 @@ directory_entry* create_file(char* filename, char* ext) {
 }
 
 
-int next_pos = 0;
+int next_pos = 2;
 int sfs_getnextfilename(char* fname) { // get the name of the next file in directory
     read_root_dir();
     
-    if(next_pos >= root_dir->count) { return 0; }
+    if(next_pos >= root_dir->count) { 
+        return 0;
+    }
     
     char buff[1024];
     sprintf(buff, "%s", (root_dir->entries[next_pos]).filename);
     strcpy(fname, buff);
     next_pos++;
+    return 1;
 }
 
 int sfs_getfilesize(const char* path) { // get the size of a given file
@@ -474,7 +477,7 @@ int sfs_fwrite(int fdId, char* buf, int len) {
             entry->rw_ptr += fill_len;
             total_written += fill_len;
             
-            (itbl->inodes[entry->inode_index]).size += fill_len;
+            //(itbl->inodes[entry->inode_index]).size += fill_len;
         }
     }
     
@@ -591,7 +594,9 @@ int sfs_fread(int fdId, char* buf, int len) {
             block_read_index = (itbl->inodes[entry->inode_index]).ptrs[rel_start_block_index];
         }
         
-        int to_read_len = read_len > SFS_API_BLOCK_SIZE ? SFS_API_BLOCK_SIZE - start_index : read_len;
+        //int to_read_len = start_index + read_len > SFS_API_BLOCK_SIZE ? SFS_API_BLOCK_SIZE - start_index : read_len;
+        
+        int to_read_len = start_index + read_len > SFS_API_BLOCK_SIZE ? SFS_API_BLOCK_SIZE - start_index : read_len;
         
         char* block_buff = malloc(SFS_API_BLOCK_SIZE);
         read_blocks(block_read_index, 1, block_buff);

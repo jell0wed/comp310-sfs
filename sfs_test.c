@@ -24,8 +24,8 @@
  * support much shorter or larger files for some reason, feel free to
  * reduce this value.
  */
-#define MAX_BYTES 1 /* Maximum file size I'll try to create */
-#define MIN_BYTES 10         /* Minimum file size */
+#define MAX_BYTES 50000 /* Maximum file size I'll try to create */
+#define MIN_BYTES 1000         /* Minimum file size */
 
 /* Just a random test string.
  */
@@ -178,7 +178,7 @@ main(int argc, char **argv)
       }
       for (k = 0; k < readsize; k++) {
         if (buffer[k] != (char)(j+k)) {
-          fprintf(stderr, "ERROR: data error at offset %d in file %s (%d,%d) size = %d\n",
+          fprintf(stderr, "ERROR: data error at offset %d in file %s (%d,%d) chunksize = %d\n",
                   j+k, names[i], buffer[k], (char)(j+k), chunksize);
           error_count++;
           break;

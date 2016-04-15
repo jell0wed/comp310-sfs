@@ -24,8 +24,8 @@
  * support much shorter or larger files for some reason, feel free to
  * reduce this value.
  */
-#define MAX_BYTES 3000 /* Maximum file size I'll try to create */
-#define MIN_BYTES 1000         /* Minimum file size */
+#define MAX_BYTES 30000 /* Maximum file size I'll try to create */
+#define MIN_BYTES 10000         /* Minimum file size */
 
 /* Just a random test string.
  */
@@ -64,6 +64,7 @@ char *rand_name()
 int
 main(int argc, char **argv)
 {
+    
   int i, j, k;
   int chunksize;
   int readsize;
