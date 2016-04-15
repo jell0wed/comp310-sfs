@@ -456,7 +456,7 @@ int sfs_fwrite(int fdId, char* buf, int len) {
             if(start_inode_ptr_idx >= SFS_NUM_DIRECT_PTR) {
                 start_block = indirection_block->ptrs[start_inode_ptr_idx - SFS_NUM_DIRECT_PTR];
             } else {
-                start_block = (itbl->inodes[entry->inode_index]).ptrs[start_inode_ptr_idx - 1];
+                start_block = (itbl->inodes[entry->inode_index]).ptrs[start_inode_ptr_idx/* - 1*/];
             }
             
             int fill_len = last_index + len > SFS_API_BLOCK_SIZE ? (SFS_API_BLOCK_SIZE - last_index) : len;
@@ -486,6 +486,7 @@ int sfs_fwrite(int fdId, char* buf, int len) {
     
     if(len > 0) {
         char* new_blocks_buff = malloc(block_len * SFS_API_BLOCK_SIZE);
+        memset(new_blocks_buff, 0, block_len * SFS_API_BLOCK_SIZE);
         memcpy(new_blocks_buff, buf, len);
         allocate_block(block_start, block_len, new_blocks_buff);
         free(new_blocks_buff);
@@ -565,7 +566,7 @@ int sfs_fread(int fdId, char* buf, int len) {
         printf("filesize limit reached");
         return;
     }
-    
+    int before = entry->rw_ptr;
     int rel_start_block_index = (int)floor((float)entry->rw_ptr / (float)SFS_API_BLOCK_SIZE);
     int start_index = entry->rw_ptr % SFS_API_BLOCK_SIZE;
     int read = 0;
@@ -607,7 +608,7 @@ int sfs_fread(int fdId, char* buf, int len) {
     if(ind_block != 0) {
         free(ind_block);
     }
-    
+    //entry->rw_ptr += before;
     return read;
 }
 

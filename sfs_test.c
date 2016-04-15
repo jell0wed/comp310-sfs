@@ -24,8 +24,8 @@
  * support much shorter or larger files for some reason, feel free to
  * reduce this value.
  */
-#define MAX_BYTES 3000 /* Maximum file size I'll try to create */
-#define MIN_BYTES 1000         /* Minimum file size */
+#define MAX_BYTES 1 /* Maximum file size I'll try to create */
+#define MIN_BYTES 10         /* Minimum file size */
 
 /* Just a random test string.
  */
@@ -41,7 +41,7 @@ static char test_str[] = "The quick brown fox jumps over the lazy dog.\n";
  * The return value is a pointer to the new string, which may be
  * released by a call to free() when you are done using the string.
  */
- 
+ //
 char *rand_name() 
 {
   char fname[MAX_FNAME_LENGTH];
@@ -178,8 +178,8 @@ main(int argc, char **argv)
       }
       for (k = 0; k < readsize; k++) {
         if (buffer[k] != (char)(j+k)) {
-          fprintf(stderr, "ERROR: data error at offset %d in file %s (%d,%d)\n",
-                  j+k, names[i], buffer[k], (char)(j+k));
+          fprintf(stderr, "ERROR: data error at offset %d in file %s (%d,%d) size = %d\n",
+                  j+k, names[i], buffer[k], (char)(j+k), chunksize);
           error_count++;
           break;
         }
