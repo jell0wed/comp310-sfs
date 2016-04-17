@@ -10,6 +10,7 @@
 #define SFS_INODE_TABLE_SIZE    20
 #define SFS_NUM_DIRECT_PTR  12
 #define SFS_MAX_FILENAME    13
+#define SFS_MAX_EXT         3
 #define SFS_MAX_FDENTRIES   1024
 
 void mksfs(int fresh);  // creates the file system
@@ -45,7 +46,7 @@ typedef struct {
 typedef struct {
     int inode_index;
     char filename[SFS_MAX_FILENAME];
-    char extension[3];
+    char extension[SFS_MAX_EXT];
 } directory_entry;
 
 typedef struct {

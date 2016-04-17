@@ -457,6 +457,21 @@ directory_entry* get_file(char* filename) {
 }
 
 /**
+ * Extracts the file extension from a given file name
+ * @param filename Filename with extension
+ * @return Extension of the file name
+ */
+const int extract_filename_ext(char* filename, char* ext_filename, char* ext_ext) {
+    char *dot = strrchr(filename, '.');
+    if(!dot || dot == filename) return -1;
+    
+    strncpy(ext_filename, filename, dot - filename);
+    strncpy(ext_ext, dot + 1, 3);
+    
+    return 0;
+}
+
+/**
  * Create a file and insert it into the root directory
  * @param filename The file name to create
  * @return A pointer to the newly created file entry
@@ -475,6 +490,7 @@ directory_entry* create_file(char* filename) {
     
     directory_entry entry;
     entry.inode_index = inode_index;
+    //extract_filename_ext(filename, entry.filename, entry.extension);
     strcpy(entry.filename, filename);
     //strcpy(entry.extension, ext);
     
@@ -865,6 +881,10 @@ int sfs_remove(char* name) {
 }
 
 /*int main() {
+    char fname[13];
+    char fext[3];
+    extract_filename_ext("test.txt", fname, fext);
+    
     mksfs(1);
     int first_created = get_file("test1mb") == 0;
     int fd = sfs_fopen("test1mb");
