@@ -3,7 +3,7 @@
 
 #include <sys/stat.h>
 
-#define SFS_API_FILENAME    "/home/jeremiep/myfs.sfs"
+#define SFS_API_FILENAME    "myfs.sfs"
 #define SFS_API_BLOCK_SIZE  1024
 #define SFS_API_NUM_BLOCKS  2048
 #define SFS_MAGIC_NUMBER    0xACBD0005
