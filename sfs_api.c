@@ -5,8 +5,13 @@
 #include "sfs_api.h"
 #include "disk_emu.h"
 
+// the number of disk block required to store the free block list
 const int free_block_list_req_blocks = (int)ceil((float)SFS_API_NUM_BLOCKS / (float)SFS_API_BLOCK_SIZE);
+
+// the maximum number of inodes 
 const int max_inodes = (int)floor((float)(SFS_INODE_TABLE_SIZE * SFS_API_BLOCK_SIZE) / (float)sizeof(inode));
+
+// the number of indirection datablock pointer per data black
 const int indirection_datablock_count = (int)floor((float)(SFS_API_BLOCK_SIZE - sizeof(int)) / (float)sizeof(int));
 
 superblock* sblock;
@@ -15,6 +20,9 @@ directory* root_dir;
 file_descriptor_table* fdtbl;
 char* free_block_list;
 
+/*
+ * Initializes the inode table data structure (in mem)
+ */
 void initialize_inode_table() {
     itbl = malloc(sizeof(inode_table));
     
@@ -28,15 +36,24 @@ void initialize_inode_table() {
     }
 }
 
+/**
+ * Initializes the file descriptor table data structure (in mem)
+ */
 void initialize_file_descriptor_table() {
     fdtbl = malloc(sizeof(file_descriptor_table));
     
-    fdtbl->size = 1024;
+    fdtbl->size = SFS_MAX_FDENTRIES;
     for(int i = 0; i < fdtbl->size; i++) {
         (fdtbl->entries[i]).in_use = 0;
     }
 }
 
+/**
+ * Persists the free block list data structure on the disk
+ * 
+ * Basic algorithm:
+ *   Free block list is stored as a (char) array of length = number of blocks
+ */
 void write_free_block_list() {
     char* free_block_buff = strdup(free_block_list);
     //memcpy(free_block_buff, free_block_list, SFS_API_BLOCK_SIZE);
@@ -44,6 +61,13 @@ void write_free_block_list() {
     free(free_block_buff);
 }
 
+/**
+ * Reads the free block list data structure from the disk to main memory
+ * 
+ * Basic algorithm:
+ *   Free block list is stored as a (char) array of length = number of blocks
+ *   Read as a whole block (no iteration)
+ */
 void read_free_block_list() {
     char* free_block_buff = malloc(free_block_list_req_blocks * SFS_API_BLOCK_SIZE);
     read_blocks(1 + SFS_INODE_TABLE_SIZE, free_block_list_req_blocks, free_block_buff);
@@ -52,6 +76,14 @@ void read_free_block_list() {
     free(free_block_buff);
 }
 
+/**
+ * Persists the inode table data structure on the disk
+ * 
+ * Basic algorithm: 
+ *   The inode table is stored on the disk with its inodes entries 
+ *      Iterate over the free_inode table, for each used inode store it on disk
+ *      at its corresponding position
+ */
 void write_inode_table() {
     char* inode_table_buff = malloc(SFS_INODE_TABLE_SIZE * SFS_API_BLOCK_SIZE);
     
@@ -59,14 +91,22 @@ void write_inode_table() {
     memcpy(inode_table_buff + sizeof(int), (int*)&(itbl->allocated_cnt), sizeof(int));
     memcpy(inode_table_buff + 2*sizeof(int), (char*)(itbl->free_inodes), max_inodes * sizeof(char));
     
-    for(int i = 0; i < itbl->allocated_cnt; i++) {
+    /*for(int i = 0; i < itbl->allocated_cnt; i++) {
         memcpy(inode_table_buff + sizeof(int) * 2 + max_inodes * sizeof(char) + i * sizeof(inode), (inode*)&(itbl->inodes[i]), sizeof(inode));
+    }*/
+    for(int i = 0; i < itbl->size; i++) {
+        if(itbl->free_inodes[i] == 1) { // inode at index i is used, persist on disk
+            memcpy(inode_table_buff + sizeof(int) * 2 + max_inodes * sizeof(char) + i * sizeof(inode), (inode*)&(itbl->inodes[i]), sizeof(inode));
+        }
     }
     
     write_blocks(1, SFS_INODE_TABLE_SIZE, inode_table_buff);
     free(inode_table_buff);
 }
 
+/**
+ * Reads the inode table from the disk to main memory
+ */
 void read_inode_table() {
     if(itbl != 0) { free(itbl->inodes); free(itbl->free_inodes); free(itbl); }
     
@@ -86,6 +126,14 @@ void read_inode_table() {
     free(inode_table_buff);
 }
 
+/**
+ * Main method to allocate block of data on the disk. This method makes sure to
+ * flag block used by the allocation as used in the free block list as well as
+ * persisting data from buffer in main memory.
+ * @param start_block the disk block to start from
+ * @param nblocks the number of block to write 
+ * @param buff the actual buffer containing data
+ */
 void allocate_block(int start_block, int nblocks, char* buff) {
     write_blocks(start_block, nblocks, buff);
     
@@ -96,6 +144,11 @@ void allocate_block(int start_block, int nblocks, char* buff) {
     write_free_block_list();
 }
 
+/**
+ * Deallocate disk block while maintaining the free_block_list updated.
+ * @param start_block start block to be deallocated
+ * @param nblock the number of block to be deallocated
+ */
 void deallocate_block(int start_block, int nblock) {
     for(int i = start_block; i < (start_block + nblock); i++) {
         free_block_list[i] = 0;
@@ -104,6 +157,12 @@ void deallocate_block(int start_block, int nblock) {
     write_free_block_list();
 }
 
+/**
+ * Save the inode at a given index, maintain the free_inodes char array list
+ * up to date
+ * @param inode the inode to be stored
+ * @param index the index
+ */
 void save_inode(inode* inode, int index) {
     itbl->inodes[index] = *inode;
     itbl->allocated_cnt++;
@@ -112,6 +171,20 @@ void save_inode(inode* inode, int index) {
     write_inode_table();
 }
 
+/**
+ * Finds contiguous blocks to be allocated for a desired length (in bytes).
+ * 
+ * Basic greedy algorithm: 
+ *  - Starting from first block
+ *    - check if there is n blocks available (from free block list)
+ *    - if not: loop and start at start_index + len
+ *    - return start_index with n as length
+ * 
+ * @param desired_len The desired buffer size to store (in bytes)
+ * @param start_block Ptrs to the variable start_block return variable
+ * @param len Ptrs to the variable len return variable
+ * @return 1 if space found, -1 if no space found
+ */
 int find_free_space(int desired_len, int* start_block, int* len) {
     int num_blocks = (int)ceil((float)desired_len / (float)SFS_API_BLOCK_SIZE);
     for(int i = 0; i < SFS_API_NUM_BLOCKS; i++) {
@@ -138,33 +211,49 @@ int find_free_space(int desired_len, int* start_block, int* len) {
     return -1;
 }
 
+/**
+ * Finds the next available inode index
+ * Returns the first free available inode index
+ * @param inode_index Ptr to return variable
+ * @return -1 if no space found , 1 if found
+ */
 int find_next_available_inode_index(int* inode_index) {
     for(int i = 0; i < max_inodes; i++) {
         if(itbl->free_inodes[i] == 0) { *inode_index = i; return 1; }
     }
     
-    return 0;
+    return -1;
 }
 
+/**
+ * Finds the next available file descriptor index
+ * Returns the first free available file descriptor index
+ * @param fd_index Ptr to return variable
+ * @return -1 if no fd entry avail, 1 if found
+ */
 int find_next_avail_fd_entry(int* fd_index) {
     for(int i = 0; i < fdtbl->size; i++) {
         if((fdtbl->entries[i]).in_use == 0) { *fd_index = i; return 1; }
     }
     
-    return 0;
+    return -11;
 }
 
-
+/**
+ * Reads the root directory entry from the disk to the main memory
+ * - Finds the root inode
+ * - Reads the datablock contents from 0 to allocated_ptr (root directory could
+ *   span over multiple blocks)
+ * - For each root entry, read name & extension
+ */
 void read_root_dir() {
     if(root_dir != 0) { free(root_dir->entries); free(root_dir); }
     read_inode_table();
     inode* root_inode = &itbl->inodes[sblock->root_inode_no];
     
+    // read the whole root directory block(s) in the buffer
     char* root_dir_buff = malloc(root_inode->allocated_ptr * SFS_API_BLOCK_SIZE);
     read_blocks(root_inode->ptrs[0], root_inode->allocated_ptr, (char*)root_dir_buff);
-    
-    //int* countbuff = malloc(sizeof(int));
-    //memcpy(countbuff, root_dir_buff, sizeof(int));
     
     root_dir = malloc(sizeof(directory));
     root_dir->count = *((int*)root_dir_buff);
@@ -173,19 +262,37 @@ void read_root_dir() {
         return -1;
     }
     
+    // for each entry, retrieve the filename, inode index and extension
     for(int i = 0; i < root_dir->count; i++) {
         memcpy(&((root_dir->entries[i]).inode_index), root_dir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i, sizeof(int));
         memcpy((root_dir->entries[i]).filename, root_dir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i + sizeof(int), 16);
         memcpy((root_dir->entries[i]).extension, root_dir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i + sizeof(int) + 16, 3);
     }
     
-    //free(countbuff);
+    // free buffer
     free(root_dir_buff);
 }
 
+/**
+ * Insert a directory_entry in the root directory, that is, update the root_directory
+ * data structure and persists changes on the disk.
+ * 
+ * Basic Algorithm:
+ *  - if directory is NOT big enough:
+ *     - find free space with sufficent size
+ *     - move the whole root dir to those blocks
+ *     - update root inode
+ *     - persists inode table
+ *  - reallocate the entries array to contain one more element
+ *  - append entry at the end of the entries
+ *  - update entries count
+ * 
+ * @param entry the entry to insert in the root directory 
+ */
 void insert_root_dir(directory_entry entry) {
     int total_dir_size = sizeof(directory) - 1 + root_dir->count * sizeof(directory_entry);
     int total_dir_cap = (&itbl->inodes[sblock->root_inode_no])->allocated_ptr * SFS_API_BLOCK_SIZE;
+    // check if the directory is big enough to insert the item
     if((total_dir_size + sizeof(directory_entry)) > total_dir_cap) {
         // reallocate a new set of block for the root directory and update inode
         int start_index, block_len;
@@ -200,12 +307,13 @@ void insert_root_dir(directory_entry entry) {
         write_inode_table();
     }
     
-    read_root_dir();
+    read_root_dir(); // make sure we are up to date
     
     directory* new_root = malloc(sizeof(directory));
     new_root->count = root_dir->count + 1;
+    // reallocate entries array
     new_root->entries = (directory_entry*)calloc(new_root->count, sizeof(directory_entry));
-    for(int i = 0; i < root_dir->count; i++) {
+    for(int i = 0; i < root_dir->count; i++) { // copy old stuff
         memset((new_root->entries[i]).filename, '\0', sizeof((new_root->entries[i]).filename));
         memset((new_root->entries[i]).extension, '\0', sizeof((new_root->entries[i]).extension));
         
@@ -214,6 +322,7 @@ void insert_root_dir(directory_entry entry) {
         (new_root->entries[i]).inode_index = (root_dir->entries[i]).inode_index;
     }
     
+    // insert new entry at the end
     strcpy((new_root->entries[root_dir->count]).filename, entry.filename);
     strcpy((new_root->entries[root_dir->count]).extension, entry.extension);
     (new_root->entries[root_dir->count]).inode_index = entry.inode_index;
@@ -224,7 +333,9 @@ void insert_root_dir(directory_entry entry) {
         memcpy(rootdir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i, &((new_root->entries[i]).inode_index), sizeof(int));
         memcpy(rootdir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i + sizeof(int), (new_root->entries[i]).filename, 16);
         memcpy(rootdir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i + sizeof(int) + 16, (new_root->entries[i]).extension, 3);
+    
     }
+    // persist root directory
     //memcpy(rootdir_buff, new_root, sizeof(int) + new_root->count * sizeof(directory_entry));
     write_blocks((itbl->inodes[sblock->root_inode_no]).ptrs[0], (itbl->inodes[sblock->root_inode_no]).allocated_ptr, rootdir_buff);
     free(rootdir_buff);
@@ -232,6 +343,16 @@ void insert_root_dir(directory_entry entry) {
     read_root_dir();
 }
 
+/**
+ * Initialize the file system
+ * Initializes the basic in-memory data structures as well as on-disk data structures.
+ * - initialize inode_table
+ * - initialize & load superblock
+ * - initialize free block list
+ * - initialize/read root directory
+ * - initialize file descriptor table
+ * @param fresh Should we start from scratch or not?
+ */
 void mksfs(int fresh) {
     free_block_list = calloc(SFS_API_BLOCK_SIZE, sizeof(char));
     if(fresh) {
@@ -311,6 +432,11 @@ void mksfs(int fresh) {
     return;
 }
 
+/**
+ * Gets a pointer to a root directory entry for a given file name
+ * @param filename The file name of the file
+ * @return directory_entry* pointer to the file having this file name, 0 (null ptr) if not found
+ */
 directory_entry* get_file(char* filename) {
     read_root_dir();
     
@@ -330,7 +456,12 @@ directory_entry* get_file(char* filename) {
     return entry;
 }
 
-directory_entry* create_file(char* filename, char* ext) {
+/**
+ * Create a file and insert it into the root directory
+ * @param filename The file name to create
+ * @return A pointer to the newly created file entry
+ */
+directory_entry* create_file(char* filename) {
     inode file_inode;
     file_inode.mode = S_IRWXU | S_IRWXG | S_IRWXO;
     file_inode.size = 0;
@@ -345,7 +476,7 @@ directory_entry* create_file(char* filename, char* ext) {
     directory_entry entry;
     entry.inode_index = inode_index;
     strcpy(entry.filename, filename);
-    strcpy(entry.extension, ext);
+    //strcpy(entry.extension, ext);
     
     read_root_dir();
     insert_root_dir(entry);
@@ -353,8 +484,13 @@ directory_entry* create_file(char* filename, char* ext) {
     return get_file(filename);
 }
 
-
 int next_pos = 2;
+/**
+ * Gets the name of the next file in the root directory
+ * This maintains a global variable that is incremented on each function call
+ * @param fname The return buffer variable
+ * @return 1 if file found, 0 if no more file in the directory
+ */
 int sfs_getnextfilename(char* fname) { // get the name of the next file in directory
     read_root_dir();
     
@@ -369,6 +505,11 @@ int sfs_getnextfilename(char* fname) { // get the name of the next file in direc
     return 1;
 }
 
+/**
+ * Gets the file size of a given file name
+ * @param path The filename of the file
+ * @return File size in Bytes, -1 if file not found
+ */
 int sfs_getfilesize(const char* path) { // get the size of a given file
     read_root_dir();
     
@@ -390,12 +531,28 @@ int sfs_getfilesize(const char* path) { // get the size of a given file
     return (itbl->inodes[entry->inode_index]).size;
 }
 
+/**
+ * Opens a file from the root directory and a file descriptor entry.
+ * The file is created if it doesnot exists.
+ * Will fail if the file is already opened (if a file descriptor entry exists)
+ * 
+ * Basic Algorithm:
+ * - if file does NOT exist:
+ *    - create file
+ * - if file is already opened:
+ *    - return -1
+ * - find next avail. fd entry
+ * - set it in use and initialize rw_ptr at the end of the file
+ * - return fd entry
+ * @param name Name of the file to open/create from root directory
+ * @return A file descriptor entry index
+ */
 int sfs_fopen(char* name) {
     if(strlen(name) > SFS_MAX_FILENAME) { return -1; }
     
     directory_entry* file = get_file(name);
     if(!file) {
-        file = create_file(name, "");
+        file = create_file(name);
     }
     
     if(!file) { return -1; }
@@ -420,6 +577,16 @@ int sfs_fopen(char* name) {
     return fd_index;
 }
 
+/**
+ * Given a file descriptor, closes the opened file.
+ * 
+ * Basic Algorithm:
+ * - if fd does NOT exists:
+ *   return -1
+ * - close it
+ * @param fdId the file descriptor index to close
+ * @return 0 if closed, -1 if unable to close
+ */
 int sfs_fclose(int fdId) {
     if(fdId >= fdtbl->size) { return -1; }
     if((fdtbl->entries[fdId]).in_use == 0) { return -1; }
@@ -428,6 +595,29 @@ int sfs_fclose(int fdId) {
     return 0;
 }
 
+/**
+ * Write data to an opened file through a file descriptor index
+ * 
+ * Basic algorithm:
+ * - If fd does not exists : return -1
+ * - If fd is not opened : return -1
+ * 
+ * - If file is not empty: 
+ *   - get data block according to rw_ptr (either direct data block or indirect)
+ *   - position start writing from rw_ptr % block size at this block
+ *   - write (block_size - rw_ptr % block size) len in order to fill up the first block
+ *   - update the write len -= (block-size - rw_ptr % block_size)
+ * 
+ *  - if new block needed for subsequent block, allocate them and update the 
+ *    inode (direct ptrs or indirect pointers)
+ *  - copy data from buffer to disk datablock
+ *  - update the inode table
+ *  - return the total length written to disk (in bytes) 
+ * @param fdId File descriptor to write to
+ * @param buf The data buffer
+ * @param len Length of data to write on disk
+ * @return number of bytes written to disk
+ */
 int sfs_fwrite(int fdId, char* buf, int len) {
     if(fdId >= fdtbl->size) { return -1; }
     if((fdtbl->entries[fdId]).in_use == 0) { return -1; }
@@ -440,6 +630,7 @@ int sfs_fwrite(int fdId, char* buf, int len) {
         int start_inode_ptr_idx = (int)floor((float)((fdtbl->entries[fdId]).rw_ptr) / (float)SFS_API_BLOCK_SIZE);
         int last_index = (fdtbl->entries[fdId]).rw_ptr % SFS_API_BLOCK_SIZE;
         if(start_inode_ptr_idx >= SFS_NUM_DIRECT_PTR) { // ie. has an indirection datablock
+            // load indirection block
             indirection_block = malloc(SFS_API_BLOCK_SIZE);
             indirection_block->count = 0;
             indirection_block->ptrs = (int*)calloc(indirection_datablock_count, sizeof(int));
@@ -476,11 +667,10 @@ int sfs_fwrite(int fdId, char* buf, int len) {
             len -= fill_len;
             entry->rw_ptr += fill_len;
             total_written += fill_len;
-            
-            //(itbl->inodes[entry->inode_index]).size += fill_len;
         }
     }
     
+    // allocate space for subsequent blocks
     int block_start, block_len;
     if(!find_free_space(len, &block_start, &block_len)) {
         printf("No more space left on device");
@@ -494,8 +684,11 @@ int sfs_fwrite(int fdId, char* buf, int len) {
         allocate_block(block_start, block_len, new_blocks_buff);
         free(new_blocks_buff);
         
+        // for each subsequent block, assign ptr index in the file inode
+        // (creates the indirection data block if necessary)
         for(int i = 0; i < block_len; i++) {
             if((itbl->inodes[entry->inode_index]).allocated_ptr >= SFS_NUM_DIRECT_PTR) {
+                // we now need an indirection block, create one and update inode
                 if(indirection_block == 0) {
                     int ind_block_start, block_len;
                     if(!find_free_space(len, &ind_block_start, &block_len)) {
@@ -543,21 +736,45 @@ int sfs_fwrite(int fdId, char* buf, int len) {
         free(indirection_block);
     }
     
-    (itbl->inodes[entry->inode_index]).size += total_written;
+    (itbl->inodes[entry->inode_index]).size += total_written; // update file total file size
     
-    write_inode_table();
+    write_inode_table(); // update the inode table
     return total_written;
 }
 
-void sfs_fseek(int fdId, int loc) {
+/**
+ * Given an opened file descriptor, update the rw_ptr to a given position
+ * @param fdId The opened file descriptor index
+ * @param loc The location to locate the rw_ptr
+ * @return -1 fd does not exist/not in use, 0 if ok
+ */
+int sfs_fseek(int fdId, int loc) {
     if(fdId >= fdtbl->size) { return -1; }
     if((fdtbl->entries[fdId]).in_use == 0) { return -1; }
     
     file_descriptor_entry* entry = &(fdtbl->entries[fdId]);
     
     entry->rw_ptr = loc;
+    return 0;
 }
 
+/**
+ * Reads an opened file descriptor and copy the data in the buffer passed in as
+ * parameter
+ * 
+ * Basic Algorithm : 
+ * - while there is still something to be read
+ *    - find the relative data block index (rw_ptr % block_size)
+ *    - if this index resides within an indirection block, use the ind table
+ *    - read the data and place it in the buffer
+ *    - increase the rw_ptr 
+ *    - update the relative data block index 
+ * 
+ * @param fdId The opened file descriptor to the file
+ * @param buf The buffer to return the data
+ * @param len The length of data to read from the file
+ * @return -1 if error, the length of data readed
+ */
 int sfs_fread(int fdId, char* buf, int len) {
     if(fdId >= fdtbl->size) { return -1; }
     if((fdtbl->entries[fdId]).in_use == 0) { return -1; }
@@ -569,14 +786,18 @@ int sfs_fread(int fdId, char* buf, int len) {
         printf("filesize limit reached");
         return;
     }
+    
     int before = entry->rw_ptr;
     int rel_start_block_index = (int)floor((float)entry->rw_ptr / (float)SFS_API_BLOCK_SIZE);
     int start_index = entry->rw_ptr % SFS_API_BLOCK_SIZE;
     int read = 0;
+    
     indirection_block* ind_block = 0;
     while(read_len > 0) {
         int block_read_index = 0;
+        
         if(rel_start_block_index >= SFS_NUM_DIRECT_PTR) {
+            // rel read index lies within the indirection block
             if(ind_block == 0) {
                 char* ind_block_buff = malloc(SFS_API_BLOCK_SIZE);
                 read_blocks((itbl->inodes[entry->inode_index]).ind_block_ptr, 1, ind_block_buff);
@@ -617,11 +838,19 @@ int sfs_fread(int fdId, char* buf, int len) {
     return read;
 }
 
-void sfs_remove(char* name) {
+/**
+ * Removes a file from the root directory
+ * 
+ * - check if the file eixsts
+ * - return -1 if file does not exist
+ * @param name the file name to be removed
+ * @return 1 if file successfully removed, -1 if file not found
+ */
+int sfs_remove(char* name) {
     directory_entry* file = get_file(name);
     if(!file) {
         printf("File not found.");
-        return;
+        return -1;
     }
     
     for(int i = 0; i < (itbl->inodes[file->inode_index]).allocated_ptr; i++) {
@@ -632,6 +861,7 @@ void sfs_remove(char* name) {
     write_inode_table();
     write_free_block_list();
     read_root_dir();
+    return 1;
 }
 
 /*int main() {

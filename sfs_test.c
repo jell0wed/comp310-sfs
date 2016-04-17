@@ -26,7 +26,7 @@
  */
 #define MAX_BYTES 50000 /* Maximum file size I'll try to create */
 #define MIN_BYTES 1000         /* Minimum file size */
-
+ 
 /* Just a random test string.
  */
 static char test_str[] = "The quick brown fox jumps over the lazy dog.\n";
@@ -48,7 +48,7 @@ char *rand_name()
   int i;
 
   for (i = 0; i < MAX_FNAME_LENGTH; i++) {
-    if (i != 16) {
+    if (i != 9) {
       fname[i] = 'A' + (rand() % 26);
     }
     else {
