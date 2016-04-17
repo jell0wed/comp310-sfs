@@ -327,20 +327,25 @@ void insert_root_dir(directory_entry entry) {
     strcpy((new_root->entries[root_dir->count]).extension, entry.extension);
     (new_root->entries[root_dir->count]).inode_index = entry.inode_index;
     
-    char* rootdir_buff = malloc(total_dir_cap);
-    memcpy(rootdir_buff, new_root, sizeof(int));
-    for(int i = 0; i < new_root->count; i++) {
-        memcpy(rootdir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i, &((new_root->entries[i]).inode_index), sizeof(int));
-        memcpy(rootdir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i + sizeof(int), (new_root->entries[i]).filename, 16);
-        memcpy(rootdir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i + sizeof(int) + 16, (new_root->entries[i]).extension, 3);
+    root_dir = new_root;
+    write_root_dir();
+    
+    read_root_dir();
+}
+
+void write_root_dir() {
+    char* rootdir_buff = malloc((&itbl->inodes[sblock->root_inode_no])->allocated_ptr * SFS_API_BLOCK_SIZE);
+    memcpy(rootdir_buff, root_dir, sizeof(int));
+    for(int i = 0; i < root_dir->count; i++) {
+        memcpy(rootdir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i, &((root_dir->entries[i]).inode_index), sizeof(int));
+        memcpy(rootdir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i + sizeof(int), (root_dir->entries[i]).filename, 16);
+        memcpy(rootdir_buff + sizeof(int) + (sizeof(int) + 16 + 3) * i + sizeof(int) + 16, (root_dir->entries[i]).extension, 3);
     
     }
     // persist root directory
     //memcpy(rootdir_buff, new_root, sizeof(int) + new_root->count * sizeof(directory_entry));
     write_blocks((itbl->inodes[sblock->root_inode_no]).ptrs[0], (itbl->inodes[sblock->root_inode_no]).allocated_ptr, rootdir_buff);
     free(rootdir_buff);
-    
-    read_root_dir();
 }
 
 /**
@@ -500,7 +505,7 @@ directory_entry* create_file(char* filename) {
     return get_file(filename);
 }
 
-int next_pos = 2;
+int next_pos = 0;
 /**
  * Gets the name of the next file in the root directory
  * This maintains a global variable that is incremented on each function call
@@ -873,48 +878,48 @@ int sfs_remove(char* name) {
         deallocate_block((itbl->inodes[file->inode_index]).ptrs[i], 1);
     }
     
+    for(int i = 0 ; i < root_dir->count - 1; i++) {
+        if(&root_dir->entries[i] >= file) {
+            root_dir->entries[i] = root_dir->entries[i + 1];
+        }
+    }
+    
+    root_dir->count--;
     itbl->free_inodes[file->inode_index] = 0;
     write_inode_table();
     write_free_block_list();
+    write_root_dir();
     read_root_dir();
     return 1;
 }
 
 /*int main() {
-    char fname[13];
-    char fext[3];
-    extract_filename_ext("test.txt", fname, fext);
-    
     mksfs(1);
-    int first_created = get_file("test1mb") == 0;
-    int fd = sfs_fopen("test1mb");
-    if(first_created) {
-        char* tt = "1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz";
-        sfs_fwrite(fd, tt, 1116);
+    
+    int fds[20];
+    for(int i = 0; i < 20; i++) {
+        char name[1024];
+        sprintf(name, "file_%d", i);
+        fds[i] = sfs_fopen(name);
+        
+        if(fds[i] > 0) {
+            printf("Opened %s\n", name);
+        }
+        
     }
     
-    char testbuff[1117];
-    sfs_fseek(fd, 0);
-    sfs_fread(fd, testbuff, 1117);
+    mksfs(0);
+    printf("Reopened sfs...");
     
-    printf("%s\n", testbuff);
-    
-    sfs_fclose(fd);
-    
-    printf("Before : \n");
-    char fname[1024];
-    while(sfs_getnextfilename(fname) != 0) {
-        int size = sfs_getfilesize(fname);
-        printf("%s : size = %d\n", fname, size);
+    char namebuff[1024];
+    while(sfs_getnextfilename(namebuff))
+    {
+        int size = sfs_getfilesize(namebuff);
+        printf("file %s as file size = %d\n", namebuff, size);
     }
     
-    sfs_remove("test1mb");
     
-    printf("After delete : \n");
-    while(sfs_getnextfilename(fname) != 0) {
-        int size = sfs_getfilesize(fname);
-        printf("%s : size = %d\n", fname, size);
-    }
+    
     
     return 0;
 }*/
